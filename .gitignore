@@ -1,4 +1,4 @@
-# 构建产物与本地状态一律不入库
+# Build output and local state never belong in this repo
 out/
 *.zip
 *.img

@@ -1,125 +1,175 @@
-# ksu-addon —— 多 SU 后端的 root 附加层（BakaSU / KernelSU / KernelSU-Next / SukiSU）
+# ksu-addon — multi-backend SU + SUSFS sandbox build tooling
 
-一条命令产出 **无 root** 与 **带 root** 两个 PixelOS 包，且：
-**补丁打在 overlay 沙盒里，编译输出也写在 overlay 沙盒里，编完卸载即还原。**
-内核 checkout 永远保持无补丁的原始状态，`out/` 物理层也不被写。
+Build both a **rootless** and a **rooted** PixelOS/LineageOS package from one
+ROM tree, with the patches and the build output confined to copy-on-write
+overlay sandboxes.
+
+The kernel checkout and `out/` are never written: every patch lands in the
+overlay upper layer, every build artifact likewise, and unmounting the sandbox
+restores the physical tree byte for byte.
 
 ---
 
-## 1. 支持的 SU 后端（variant）
+## 1. Supported SU backends (variants)
 
-| variant | 上游 | 参考提交 | SUSFS | 状态 |
+| variant | upstream | reference commit | SUSFS | status |
 | --- | --- | --- | --- | --- |
-| `bakasu-susfs`（默认） | <https://github.com/Baka-SU/BakaSU> | `5d6d184` | 自带 KSU 侧钩子 + `0002` 提供内核实现 | **已实机验证** |
-| `kernelsu-susfs` | <https://github.com/tiann/KernelSU> | `64833c0` | 官方**不带**，用 `0003`（susfs4ksu 的 `10_enable_susfs_for_ksu.patch`）补 | 补丁已生成并按序校验通过，待构建验证 |
-| `kernelsu-next-susfs` | <https://github.com/KernelSU-Next/KernelSU-Next> | `dev` `7ccf614` | 设计为 **SUSFS LKM**（`susfs.ko`，运行时加载；仓库含 `kernel/susfs/` LKM 侧源码），不是静态内核补丁 | KSU 本体编译验证中 |
-| `sukisu-susfs` | <https://github.com/SukiSU-Nova/SukiSU-Nova> | `builtin` `4bec532` | **builtin 分支自带**（Kconfig 21 条 `KSU_SUSFS`、`susfs_init` 4 处）；内核实现仍由 `0002` 提供 | 补丁已生成并按序校验通过，构建中 |
+| `bakasu-susfs` (default) | <https://github.com/Baka-SU/BakaSU> | `5d6d184` | KSU-side hooks included; kernel side from `0002` | built + verified on device |
+| `kernelsu-susfs` | <https://github.com/tiann/KernelSU> | `64833c0` | **not included upstream**; added via `0003` (susfs4ksu `10_enable_susfs_for_ksu.patch`) | built |
+| `sukisu-susfs` | <https://github.com/SukiSU-Nova/SukiSU-Nova> | `builtin` `4bec532` | included in `builtin` (21 `KSU_SUSFS` entries) | built |
+| `kernelsu-next-susfs` | <https://github.com/KernelSU-Next/KernelSU-Next> | `dev` `7ccf614` | **LKM design**: susfs ships as `susfs.ko` and is loaded at runtime | root built; `susfs.ko` not included |
 
-> 上游对应的“手动集成”入口（供换源时参考，本目录把它固化成补丁，构建时不联网执行）：
->
-> ```bash
-> # BakaSU（ReSukiSU 项目已迁至 BakaSU）
-> curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash
-> # KernelSU 官方
-> curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
-> # KernelSU-Next
-> curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
-> # SukiSU-Ultra
-> curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
-> ```
+Upstream manual-integration entry points (reference only — this repo turns them
+into patches, nothing is fetched at build time):
 
-**SUSFS 来源**：内核实现（`fs/susfs.c`、`include/linux/susfs*.h`、fs/mm/selinux 钩子）来自
-[susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) 的 `gki-android15-6.6` 分支（v2.4.0）。
-KernelSU 原版自身不会应用 SUSFS；BakaSU 与 SukiSU 自带 KSU 侧钩子。
+```bash
+# BakaSU (the ReSukiSU project moved to BakaSU)
+curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash
+# KernelSU
+curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+# KernelSU-Next
+curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+# SukiSU-Ultra (setup.sh clones SukiSU-Nova and checks out the given ref)
+curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+```
+
+**SUSFS source**: the kernel-side implementation (`fs/susfs.c`,
+`include/linux/susfs*.h`, fs/mm/selinux hooks) comes from
+[susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu), branch
+`gki-android15-6.6` (v2.4.0). KernelSU upstream does not apply SUSFS on its own.
 
 ---
 
-## 2. 目录结构
+## 2. Layout
 
 ```
 ksu-addon/
 ├── bin/
-│   ├── sandbox.sh   # overlay 沙盒：up/down out|kernel、status
-│   ├── ksu.sh       # prepare（打补丁 + 本地提交）/ cleanup（卸载 + 回滚）/ check
-│   └── build.sh     # 构建入口：non-root 与 rooted 各一遍
+│   ├── sandbox.sh   # overlay sandbox: up/down out|kernel, status, selftest
+│   ├── ksu.sh       # prepare (apply patches + local commit) / cleanup / check
+│   ├── build.sh     # build entry: non-root and rooted passes
+│   └── verify.sh    # validate an artifact directory
 ├── variants/
-│   ├── bakasu-susfs/{variant.env, series/*.patch}
-│   ├── kernelsu-susfs/{variant.env, series/*.patch}
-│   ├── kernelsu-next-susfs/variant.env
-│   └── sukisu-susfs/variant.env
-├── install.sh       # 一键部署到 ROM 树
+│   └── <name>/{variant.env, series/*.patch}
+├── ksu-addon.sh     # unified entry point
+├── install.sh       # deploy into a ROM tree
 └── README.md
 ```
 
 ---
 
-## 3. 用法
+## 3. Usage
 
 ```bash
 cd /home/icecat/data/pixelos-6.6
 D=vendor/oneplus/ksu-addon
 
-# 两个包（默认 bakasu-susfs）
+# non-root + current variant (default bakasu-susfs)
 WITH_KSU=true JOBS=64 bash -l $D/bin/build.sh
 
-# 换 SU 后端
+# switch backend
 KSU_VARIANT=kernelsu-susfs WITH_KSU=true JOBS=64 bash -l $D/bin/build.sh
 
-# 只出无 root / 只重出带 root
-bash -l $D/bin/build.sh
-KSU_VARIANT=kernelsu-susfs WITH_KSU=true ONLY=rooted JOBS=64 bash -l $D/bin/build.sh
+# every variant, one after another
+WITH_KSU=true JOBS=64 bash -l $D/bin/build.sh --all-variants
 
-# 体检
-bash $D/bin/ksu.sh check                        # 补丁能否在当前 HEAD 上按序应用
+# subset, or a single rooted pass
+WITH_KSU=true bash -l $D/bin/build.sh --variants bakasu-susfs,kernelsu-susfs
+KSU_VARIANT=kernelsu-susfs WITH_KSU=true ONLY=rooted bash -l $D/bin/build.sh
+
+# preflight / health checks
+bash $D/bin/ksu.sh check
 KSU_VARIANT=kernelsu-susfs bash $D/bin/ksu.sh check
-bash $D/bin/sandbox.sh status                   # 沙盒是否残留
+bash $D/bin/sandbox.sh status
 ```
 
-产物放在 **ROM 树下的 `outrom/`**（首次构建自动创建）：
+Artifacts go to **`<ROM>/outrom/`** (created on demand):
 
 ```
-<ROM>/outrom/<时间戳>-non-root/PixelOS-ovaltine-<时间戳>-non-root.zip
-<ROM>/outrom/<时间戳>-<variant>/PixelOS-ovaltine-<时间戳>-<variant>.zip
+<ROM>/outrom/<timestamp>-non-root/PixelOS-ovaltine-<timestamp>-non-root.zip
+<ROM>/outrom/<timestamp>-<variant>/PixelOS-ovaltine-<timestamp>-<variant>.zip
 ```
 
-一次跑全部变体（依次构建，每个变体各自沙盒）：
+Each directory contains `MD5SUMS`, `kernel-<tag>.config`, `kernel-release.txt`
+and `ksu-version.txt`.
+
+> One ROM tree has exactly one `out/`. Running several kernel recipes
+> concurrently would corrupt each other, so `--all-variants` builds the
+> variants **sequentially**, each in its own sandbox that is torn down
+> before the next one starts.
+
+---
+
+## 4. Sandbox model and the "-dirty" fix
+
+| layer | lower (read-only) | upper (writes) | mount point |
+| --- | --- | --- | --- |
+| out | `out/` (existing build cache) | `$KSU_OVL_DIR/out-upper` | `out/` (unchanged path) |
+| kernel | `kernel/oneplus/sm8450` pristine checkout | `$KSU_OVL_DIR/kernel-upper` | unchanged path |
+
+- Mount options: `redirect_dir=on,index=on`. Without them overlayfs cannot
+  rename a lower-layer directory and soong fails with
+  `Failed to rename out/soong/metrics_aggregation`.
+- **No `-dirty` in version strings**: `prepare` commits the patches as a local
+  commit that is never pushed, so HEAD matches the worktree and both
+  `scripts/setlocalversion` and the KSU `Kbuild` report a clean tree.
+  Verified output: `6.6.144-4k-g4a542d60a2d1` (keeps `-g<hash>`, no `-dirty`).
+  The commit lives in `.repo/.../.git`, which is **not** on the overlay, so
+  `cleanup` explicitly resets to the base SHA recorded by `prepare`.
+- When a build finishes, `sandbox.sh down all` runs and the local commit is
+  rolled back; the kernel checkout stays at its base SHA with a clean
+  `git status`.
+
+---
+
+## 5. Known pitfalls (all handled in the scripts)
+
+1. ReSukiSU/BakaSU `Kbuild` requires a `.git` or `.vendored` marker next to
+   `KernelSU/`. Dotfiles cannot be carried by patches, so `prepare` creates it
+   (`: > KernelSU/.vendored`), inside the upper layer only.
+2. `git apply --3way` writes to the index, and the index lives in `.repo`
+   (outside the overlay). All patches are applied with plain `git apply`, and
+   `cleanup` still runs `git reset` as a safety net.
+3. A brand-new out directory breaks siso bootstrap with
+   `@config//main.star: no such file`. This tooling reuses the existing `out/`
+   through an overlay, so it never creates a fresh one. (If you ever need one:
+   relative `OUT_DIR` plus `SOONG_NINJA=ninja` works.)
+4. The kernel headers genrule declares an incomplete `dep_files` list (missing
+   `scripts/**/*`), which only shows up on the **ninja + sbox** path. This
+   tooling uses the default siso backend, so it is not triggered.
+5. `ksu.sh check` must apply the series **in order for real** (not with
+   `--check`), because later patches touch files that earlier ones create.
+
+---
+
+## 6. Self-test and validation
 
 ```bash
-WITH_KSU=true bash -l bin/build.sh --all-variants   # non-root 一次 + 四个变体各一遍
-WITH_KSU=true bash -l bin/build.sh --variants bakasu-susfs,kernelsu-susfs
+./ksu-addon.sh selftest          # overlay round trip (mount/write/delete/rename/unmount)
+./ksu-addon.sh status            # current sandbox state
+./ksu-addon.sh check <variant>   # patches apply on the current kernel HEAD?
+./ksu-addon.sh build --dry-run   # preflight only, print the build plan
+./ksu-addon.sh verify <dir>      # artifact checks: no -dirty, CONFIG_KSU, zip MD5
 ```
 
-> 说明：同一棵 ROM 树只有一个 `out/`，多个内核配方**并发**会互相污染，
-> 因此这里是“依次构建”而不是真正并行；每个变体的 out 沙盒在它那一遍结束后即卸载。
+## 7. Publishing scope
 
-每个目录带 `MD5SUMS`、`kernel-<标签>.config`、`kernel-release.txt`（版本串）、`ksu-version.txt`。
+This repository contains **build tooling and patches only**:
 
----
+- included: `bin/`, `variants/*/series/*.patch`, `variant.env`, `install.sh`,
+  `ksu-addon.sh`, `README.md`
+- excluded: any kernel source, patched kernel tree, or build output
+  (`out/`, zips, images)
 
-## 4. 沙盒模型与“脏”标记处理
+Patches are diffs against upstream SU sources and susfs4ksu. They are applied
+inside an overlay sandbox at build time and destroyed on unmount; no mainline or
+testing branch is ever modified.
 
-| 层 | lower（只读） | upper（写入） | 挂载点 |
-| --- | --- | --- | --- |
-| out | `out/`（non-root 编译缓存） | `$KSU_OVL_DIR/out-upper` | `out/` 原路径 |
-| kernel | `kernel/oneplus/sm8450` 原始 checkout | `$KSU_OVL_DIR/kernel-upper` | 原路径 |
+## 8. Install into a ROM tree
 
-- 挂载参数：`redirect_dir=on,index=on`（否则 overlay 不能重命名 lower 目录，
-  soong 报 `Failed to rename out/soong/metrics_aggregation`）。
-- **版本串不带 `-dirty`**：`prepare` 把补丁提交成本地 commit（**不 push**），
-  HEAD 与工作区一致，`scripts/setlocalversion` 与 KSU `Kbuild` 都不标脏。
-  实测产物：`6.6.144-4k-g4a542d60a2d1`（保留 `-g<hash>`，无 `-dirty`）。
-  ⚠️ 该 commit 在 `.repo/.../objects` 里、**不在 overlay 上**，因此 `cleanup`
-  用 `git reset --mixed <基线SHA>` 显式回滚（基线记在 `$KSU_OVL_DIR/base-head`）。
-- 编完自动 `sandbox.sh down all` 并回滚；内核 checkout 保持基线 SHA、`git status` 为空。
+```bash
+bash install.sh /path/to/rom/tree     # default: /home/icecat/data/pixelos-6.6
+```
 
----
-
-## 5. 已知坑（脚本已处理）
-
-1. ReSukiSU/BakaSU 的 `Kbuild` 要求 `KernelSU/` 旁有 `.git` 或 `.vendored`；点文件打不进补丁
-   → prepare 时 `: > KernelSU/.vendored` 现创（只在 upper 层）。
-2. `git apply --3way` 会写 index（index 在 `.repo`，不在 overlay）→ 补丁一律纯 `git apply`。
-3. 全新 out 目录的 siso bootstrap 会死在 `@config//main.star` → 本方案复用现有 `out/`，不新建目录。
-4. 内核头 genrule 的 `dep_files` 不全（缺 `scripts/**/*` 等），只在 **ninja+sbox** 路径暴露；
-   本方案走 siso 默认后端，不触发。
-5. `ksu.sh check` 必须**按序真实应用**补丁（后面的补丁依赖前面新建的文件），不能用 `--check` 逐个验。
+The script rsyncs into `vendor/oneplus/ksu-addon/` and prints the next commands.
+It does not write to any repository history.

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# ksu-addon.sh —— 统一入口
+# ksu-addon.sh -- unified entry point
 #
-#   ./ksu-addon.sh selftest          # 沙盒往返自检（不编译）
-#   ./ksu-addon.sh check [variant]   # 补丁能否在当前内核 HEAD 上按序应用
-#   ./ksu-addon.sh status            # 沙盒状态
-#   .ksu-addon.sh build [选项]      # 构建（透传参数）：--dry-run、--all-variants、--variants a,b、--only、--jobs、--variant
-#   ./ksu-addon.sh verify <产物目录>  # 校验产物
-#   ./ksu-addon.sh install [rom树]    # 部署到 ROM 树
+#   ./ksu-addon.sh selftest          # sandbox round-trip self test (no build)
+#   ./ksu-addon.sh check [variant]   # can the variant's patches apply on the current kernel HEAD?
+#   ./ksu-addon.sh status            # sandbox state
+#   ./ksu-addon.sh build [options]   # build (forwarded to bin/build.sh):
+#                                    #   --dry-run --all-variants --variants a,b --only --jobs --variant
+#   ./ksu-addon.sh verify <dir>      # validate an artifact directory
+#   ./ksu-addon.sh install [rom]     # install into a ROM tree
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 cmd=${1:-help}; shift || true

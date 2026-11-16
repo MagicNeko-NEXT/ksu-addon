@@ -6,11 +6,11 @@ MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-CONFIG_KSU=y 与 CONFIG_KSU_SUSFS=y 及子项写进 vendor/oplus/waipio_GKI.config，
-device/oneplus/sm8450-common 的 TARGET_KERNEL_CONFIG 已经包含该文件，
-merge_config.sh 会自动合并，不需要改设备树。
+CONFIG_KSU=y plus CONFIG_KSU_SUSFS=y and its sub-options are written into vendor/oplus/waipio_GKI.config,
+which device/oneplus/sm8450-common already lists in TARGET_KERNEL_CONFIG,
+so merge_config.sh picks it up automatically and no device tree change is needed.
 
-测试：bootimage 编译。
+Tested: bootimage build.
 ---
  arch/arm64/configs/vendor/oplus/waipio_GKI.config | 12 ++++++++++++
  1 file changed, 12 insertions(+)
@@ -24,7 +24,7 @@ index 8d293f5add20..4ea5107352c9 100644
  # first-stage module list, so a missing symbol is fatal to first-stage init.
  CONFIG_FB=y
 +
-+# ReSukiSU + SUSFS (附加层，随 TARGET_KERNEL_CONFIG 自动 merge)
++# ReSukiSU + SUSFS (add-on layer, merged via TARGET_KERNEL_CONFIG)
 +CONFIG_KSU=y
 +CONFIG_KSU_SUSFS=y
 +CONFIG_KSU_SUSFS_SUS_PATH=y

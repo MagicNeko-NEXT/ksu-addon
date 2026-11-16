@@ -6,11 +6,11 @@ MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-susfs4ksu gki-android15-6.6 (f98f082) 的 50_add_susfs_in_gki-android15-6.6.patch
-在 6.6.144 上零冲突应用；fs/susfs.c 与 include/linux/susfs*.h 由 kernel_patches/
-整份拷贝补齐，fs/Makefile 的 obj-$(CONFIG_KSU_SUSFS) += susfs.o 由补丁引入。
+Patch 50_add_susfs_in_gki-android15-6.6.patch from susfs4ksu gki-android15-6.6 (f98f082)
+applies cleanly on 6.6.144; fs/susfs.c and include/linux/susfs*.h are copied from kernel_patches/
+as whole files, and fs/Makefile gets obj-$(CONFIG_KSU_SUSFS) += susfs.o from the patch.
 
-测试：bootimage 编译。
+Tested: bootimage build.
 ---
  block/ioprio.c                 |   22 +-
  drivers/input/input.c          |   10 +

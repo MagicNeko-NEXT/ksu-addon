@@ -1,9 +1,10 @@
-# ksu-addon 构建级目标（只读体检，不嵌套 m）
+# ksu-addon build-level target (read-only health check; never nests an m call)
 #
-#   m ksu-check     # 断言：主线 ref 无 KSU、内核 checkout 干净、补丁能在当前 HEAD 上干净应用
+#   m ksu-check     # assert: protected refs are clean, kernel checkout is clean,
+#                   # patches apply on the current HEAD
 #
-# 注意：这里只做检查。真正的两遍构建由 bin/build.sh 编排 ——
-# 在 make 里嵌套 m 会抢同一个 out/ 与 soong 锁，必定翻车。
+# The real two-pass build is orchestrated by bin/build.sh. Nesting "m" inside a
+# make recipe would fight over the same out/ and soong lock, so it is avoided.
 
 ifeq ($(WITH_KSU),true)
 .PHONY: ksu-check
