@@ -75,12 +75,22 @@ KSU_VARIANT=kernelsu-susfs bash $D/bin/ksu.sh check
 bash $D/bin/sandbox.sh status                   # 沙盒是否残留
 ```
 
-产物（`OUTPUT_TAG` 随变体走）：
+产物放在 **ROM 树下的 `outrom/`**（首次构建自动创建）：
 
 ```
-/home/icecat/data/ovaltine-debug/ksu/<时间戳>-non-root/PixelOS-ovaltine-<时间戳>-non-root.zip
-/home/icecat/data/ovaltine-debug/ksu/<时间戳>-<variant>/PixelOS-ovaltine-<时间戳>-<variant>.zip
+<ROM>/outrom/<时间戳>-non-root/PixelOS-ovaltine-<时间戳>-non-root.zip
+<ROM>/outrom/<时间戳>-<variant>/PixelOS-ovaltine-<时间戳>-<variant>.zip
 ```
+
+一次跑全部变体（依次构建，每个变体各自沙盒）：
+
+```bash
+WITH_KSU=true bash -l bin/build.sh --all-variants   # non-root 一次 + 四个变体各一遍
+WITH_KSU=true bash -l bin/build.sh --variants bakasu-susfs,kernelsu-susfs
+```
+
+> 说明：同一棵 ROM 树只有一个 `out/`，多个内核配方**并发**会互相污染，
+> 因此这里是“依次构建”而不是真正并行；每个变体的 out 沙盒在它那一遍结束后即卸载。
 
 每个目录带 `MD5SUMS`、`kernel-<标签>.config`、`kernel-release.txt`（版本串）、`ksu-version.txt`。
 

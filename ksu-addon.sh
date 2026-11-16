@@ -4,7 +4,7 @@
 #   ./ksu-addon.sh selftest          # 沙盒往返自检（不编译）
 #   ./ksu-addon.sh check [variant]   # 补丁能否在当前内核 HEAD 上按序应用
 #   ./ksu-addon.sh status            # 沙盒状态
-#   ./ksu-addon.sh build [--dry-run] # 构建（透传参数给 bin/build.sh）
+#   .ksu-addon.sh build [选项]      # 构建（透传参数）：--dry-run、--all-variants、--variants a,b、--only、--jobs、--variant
 #   ./ksu-addon.sh verify <产物目录>  # 校验产物
 #   ./ksu-addon.sh install [rom树]    # 部署到 ROM 树
 set -euo pipefail

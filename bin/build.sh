@@ -19,7 +19,7 @@ KSUSH=$ADDON/bin/ksu.sh
 SANDBOX=$ADDON/bin/sandbox.sh
 LOG=$TOP/build-live.log
 OUT=$TOP/out/target/product/ovaltine
-ARTBASE=${KSU_ARTBASE:-/home/icecat/data/ovaltine-debug/ksu}
+ARTBASE=${KSU_ARTBASE:-$TOP/outrom}   # ROM 树下的 outrom/（不存在则创建）
 
 WITH_KSU=${WITH_KSU:-false}
 ONLY=${ONLY:-both}
@@ -28,6 +28,8 @@ JOBS=${JOBS:-$(nproc 2>/dev/null || echo 8)}
 TARGET=${TARGET:-custom_ovaltine-cp2a-userdebug}
 GOAL=${GOAL:-pixelos}
 DRY_RUN=false
+ALL_VARIANTS=${ALL_VARIANTS:-false}
+VARIANTS_CSV=${VARIANTS_CSV:-}
 ROOTED_TAG=$VARIANT
 
 while [ $# -gt 0 ]; do
@@ -36,6 +38,8 @@ while [ $# -gt 0 ]; do
     --variant) VARIANT=$2; ROOTED_TAG=$2; shift ;;
     --jobs) JOBS=$2; shift ;;
     --only) ONLY=$2; shift ;;
+    --all-variants) ALL_VARIANTS=true ;;
+    --variants) VARIANTS_CSV=$2; shift ;;
     -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
@@ -49,11 +53,26 @@ sbox() { bash "$SANDBOX" "$@"; }
 cd "$TOP" || die "进不去 $TOP"
 
 # ---------- 预检 ----------
+mkdir -p "$ARTBASE"
+if [ "$ALL_VARIANTS" = "true" ]; then
+  VARIANT_LIST=$(for d in "$ADDON"/variants/*/; do
+      n=$(basename "$d")
+      [ -n "$(ls -1 "$d"/series/*.patch 2>/dev/null)" ] && echo "$n"
+    done | tr '\n' ' ')
+elif [ -n "$VARIANTS_CSV" ]; then
+  VARIANT_LIST=$(echo "$VARIANTS_CSV" | tr ',' ' ')
+else
+  VARIANT_LIST=$VARIANT
+fi
+[ -n "${VARIANT_LIST// /}" ] || die "没有可用变体（variants/*/series 均为空）"
+log "本次变体：$VARIANT_LIST"
+
 SERIES=$ADDON/variants/$VARIANT/series
 [ -d "$SERIES" ] || die "没有变体 $VARIANT（缺 $SERIES）"
-[ -n "$(ls -1 "$SERIES"/*.patch 2>/dev/null)" ] || die "变体 $VARIANT 的 series/ 为空"
-log "=== 构建开始 $(date -Is) variant=$VARIANT WITH_KSU=$WITH_KSU ONLY=$ONLY JOBS=$JOBS ==="
-log "补丁 $(ls -1 "$SERIES"/*.patch | wc -l) 个：$(ls -1 "$SERIES" | tr '\n' ' ')"
+for v in $VARIANT_LIST; do
+  [ -n "$(ls -1 "$ADDON/variants/$v/series"/*.patch 2>/dev/null)" ] || die "变体 $v 的 series/ 为空"
+done
+log "=== 构建开始 $(date -Is) variants=[$VARIANT_LIST] WITH_KSU=$WITH_KSU ONLY=$ONLY JOBS=$JOBS ==="
 
 if mountpoint -q "$TOP/out" || mountpoint -q "$TOP/kernel/oneplus/sm8450"; then
   log "! 发现残留沙盒，先卸载"
@@ -61,14 +80,25 @@ if mountpoint -q "$TOP/out" || mountpoint -q "$TOP/kernel/oneplus/sm8450"; then
 fi
 
 if [ "${SKIP_CHECK:-0}" != "1" ]; then
-  KSU_VARIANT=$VARIANT bash "$KSUSH" check || die "补丁预检失败（KSU_VARIANT=$VARIANT）"
+  for v in $VARIANT_LIST; do
+    KSU_VARIANT=$v bash "$KSUSH" check >/dev/null || die "补丁预检失败（KSU_VARIANT=$v）"
+    log "✓ 预检通过：$v"
+  done
 fi
 
 if [ "$DRY_RUN" = "true" ]; then
-  log "=== DRY RUN：计划如下 ==="
-  log "1) sandbox up out → m -j$JOBS $GOAL（non-root）→ archive → sandbox down out"
-  [ "$WITH_KSU" = "true" ] && log "2) sandbox up out+kernel → 打补丁(本地提交) → m → archive($ROOTED_TAG) → cleanup → sandbox down all"
-  log "产物目录：$ARTBASE/<时间戳>-{non-root,$ROOTED_TAG}/"
+  log "=== DRY RUN：计划如下（依次构建，每个变体各自沙盒）==="
+  if [ "$ONLY" = "both" ] || [ "$ONLY" = "non-root" ]; then
+    log "1) [non-root] sandbox up out → m -j$JOBS $GOAL → archive → sandbox down out"
+  fi
+  if [ "$WITH_KSU" = "true" ] && [ "$ONLY" != "non-root" ]; then
+    n=2
+    for v in $VARIANT_LIST; do
+      log "$n) [$v] sandbox up out+kernel → 打补丁(本地提交) → m → archive($v) → cleanup → sandbox down out"
+      n=$((n+1))
+    done
+  fi
+  log "产物目录：$ARTBASE/<时间戳>-non-root/ 与 <时间戳>-<变体>/（每个变体一份，逐次生成）"
   trap 'sbox down all >/dev/null 2>&1 || true' EXIT
   exit 0
 fi
@@ -118,17 +148,20 @@ if [ "$ONLY" = "both" ] || [ "$ONLY" = "non-root" ]; then
   sbox down out || die "out 沙盒卸载失败"
 fi
 
-# ---------- 第二遍：rooted（当前变体） ----------
+# ---------- 第二遍：rooted（逐个变体，各自沙盒） ----------
 if [ "$WITH_KSU" = "true" ] && [ "$ONLY" != "non-root" ]; then
-  sbox up out || die "out 沙盒挂载失败"
-  KSU_VARIANT=$VARIANT bash "$KSUSH" prepare || die "补丁层准备失败"
-  pass "$ROOTED_TAG"
-  archive "$ROOTED_TAG"
-  grep -q "^CONFIG_KSU=y" "$OUT/obj/KERNEL_OBJ/.config" 2>/dev/null \
-    || die "$ROOTED_TAG 包内核配置没有 CONFIG_KSU=y"
-  log "✓ $ROOTED_TAG 包内核含 CONFIG_KSU=y"
-  KSU_VARIANT=$VARIANT bash "$KSUSH" cleanup
-  sbox down out || die "out 沙盒卸载失败"
+  for v in $VARIANT_LIST; do
+    log "--- rooted 变体：$v ---"
+    sbox up out || die "out 沙盒挂载失败（$v）"
+    KSU_VARIANT=$v bash "$KSUSH" prepare || die "补丁层准备失败（$v）"
+    pass "$v"
+    archive "$v"
+    grep -q "^CONFIG_KSU=y" "$OUT/obj/KERNEL_OBJ/.config" 2>/dev/null \
+      || die "$v 包内核配置没有 CONFIG_KSU=y"
+    log "✓ $v 包内核含 CONFIG_KSU=y"
+    KSU_VARIANT=$v bash "$KSUSH" cleanup
+    sbox down out || die "out 沙盒卸载失败（$v）"
+  done
 fi
 
 if [ -n "$(git -C "$TOP/kernel/oneplus/sm8450" status --porcelain)" ]; then
