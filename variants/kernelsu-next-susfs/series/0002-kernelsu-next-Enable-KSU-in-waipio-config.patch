@@ -1,0 +1,11 @@
+diff --git a/arch/arm64/configs/vendor/oplus/waipio_GKI.config b/arch/arm64/configs/vendor/oplus/waipio_GKI.config
+index 8d293f5add20..4b2363c30c99 100644
+--- a/arch/arm64/configs/vendor/oplus/waipio_GKI.config
++++ b/arch/arm64/configs/vendor/oplus/waipio_GKI.config
+@@ -189,3 +189,6 @@ CONFIG_RCU_BOOT_END_DELAY=20000
+ # fb_register_client(), which only exists with FB_NOTIFY. They sit in the
+ # first-stage module list, so a missing symbol is fatal to first-stage init.
+ CONFIG_FB=y
++
++# KernelSU-Next (root addon; susfs loads as LKM)
++CONFIG_KSU=y

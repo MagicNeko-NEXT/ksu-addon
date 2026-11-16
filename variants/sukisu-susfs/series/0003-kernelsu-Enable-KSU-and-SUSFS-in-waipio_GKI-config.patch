@@ -1,0 +1,37 @@
+From 62dcaa5770d207fbf6b740d857177a300e59291f Mon Sep 17 00:00:00 2001
+From: Myer921 <icecat@catio.network>
+Date: Mon, 16 Nov 2026 03:40:30 +0800
+Subject: [PATCH 3/3] kernelsu: Enable KSU and SUSFS in waipio_GKI config
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CONFIG_KSU=y 与 CONFIG_KSU_SUSFS=y 及子项写进 vendor/oplus/waipio_GKI.config，
+device/oneplus/sm8450-common 的 TARGET_KERNEL_CONFIG 已经包含该文件，
+merge_config.sh 会自动合并，不需要改设备树。
+
+测试：bootimage 编译。
+---
+ arch/arm64/configs/vendor/oplus/waipio_GKI.config | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/arm64/configs/vendor/oplus/waipio_GKI.config b/arch/arm64/configs/vendor/oplus/waipio_GKI.config
+index 8d293f5add20..4ea5107352c9 100644
+--- a/arch/arm64/configs/vendor/oplus/waipio_GKI.config
++++ b/arch/arm64/configs/vendor/oplus/waipio_GKI.config
+@@ -189,3 +189,15 @@ CONFIG_RCU_BOOT_END_DELAY=20000
+ # fb_register_client(), which only exists with FB_NOTIFY. They sit in the
+ # first-stage module list, so a missing symbol is fatal to first-stage init.
+ CONFIG_FB=y
++
++# ReSukiSU + SUSFS (附加层，随 TARGET_KERNEL_CONFIG 自动 merge)
++CONFIG_KSU=y
++CONFIG_KSU_SUSFS=y
++CONFIG_KSU_SUSFS_SUS_PATH=y
++CONFIG_KSU_SUSFS_SUS_MOUNT=y
++CONFIG_KSU_SUSFS_SUS_KSTAT=y
++CONFIG_KSU_SUSFS_SPOOF_UNAME=y
++CONFIG_KSU_SUSFS_ENABLE_LOG=y
++CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
++CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
++CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
